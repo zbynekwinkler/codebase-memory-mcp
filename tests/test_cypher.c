@@ -2222,6 +2222,27 @@ TEST(cypher_exec_with_where) {
     PASS();
 }
 
+TEST(cypher_exec_optional_match_with_where_is_null) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) "
+                                "OPTIONAL MATCH (caller)-[r:CALLS]->(f) "
+                                "WITH f, r "
+                                "WHERE r IS NULL "
+                                "RETURN f.name",
+                                "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    /* HandleOrder has NO incoming CALLS edge (r IS NULL)
+     * All other functions (ValidateOrder, SubmitOrder, LogError) have incoming CALLS edge (r is NOT NULL)
+     * So only HandleOrder should be returned! */
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "HandleOrder");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_exec_with_node_bare_prop) {
     cbm_store_t *s = setup_cypher_store();
     cbm_cypher_result_t r = {0};
@@ -2237,6 +2258,35 @@ TEST(cypher_exec_with_node_bare_prop) {
      * With our fix, the bare node variable passed through WITH retains its
      * properties, including the actual qualified_name. */
     ASSERT_STR_EQ(r.rows[0][0], "pkg/orders.HandleOrder");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+TEST(cypher_exec_optional_match_aggregation) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) "
+                                "OPTIONAL MATCH (caller)-[r:CALLS]->(f) "
+                                "RETURN f.name, COUNT(caller) "
+                                "LIMIT 10",
+                                "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    /* In the mock store:
+     * - HandleOrder has 0 incoming calls (COUNT = 0)
+     * - ValidateOrder has 1 incoming call from HandleOrder (COUNT = 1)
+     * - SubmitOrder has 1 incoming call from ValidateOrder (COUNT = 1)
+     * - LogError has 1 incoming call from HandleOrder (COUNT = 1)
+     * Total = 4 rows! */
+    ASSERT_EQ(r.row_count, 4);
+    for (int i = 0; i < r.row_count; i++) {
+        if (strcmp(r.rows[i][0], "HandleOrder") == 0) {
+            ASSERT_STR_EQ(r.rows[i][1], "0");
+        } else {
+            ASSERT_STR_EQ(r.rows[i][1], "1");
+        }
+    }
     cbm_cypher_result_free(&r);
     cbm_store_close(s);
     PASS();
@@ -2685,7 +2735,9 @@ SUITE(cypher) {
     RUN_TEST(cypher_exec_with_count);
     RUN_TEST(cypher_exec_with_node_groupvar_prop);
     RUN_TEST(cypher_exec_with_where);
+    RUN_TEST(cypher_exec_optional_match_with_where_is_null);
     RUN_TEST(cypher_exec_with_node_bare_prop);
+    RUN_TEST(cypher_exec_optional_match_aggregation);
     RUN_TEST(cypher_exec_with_orderby_limit);
     RUN_TEST(cypher_parse_with);
     RUN_TEST(cypher_parse_with_where);

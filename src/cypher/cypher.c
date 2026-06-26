@@ -2855,6 +2855,11 @@ static void process_edges(cbm_store_t *store, cbm_edge_t *edges, int edge_count,
             node_fields_free(&found);
             continue;
         }
+        cbm_node_t *existing = binding_get(b, to_var);
+        if (existing && existing->id != found.id) {
+            node_fields_free(&found);
+            continue;
+        }
         binding_t nb = {0};
         binding_copy(&nb, b);
         binding_set(&nb, to_var, &found);
@@ -2885,6 +2890,10 @@ static void expand_var_length(cbm_store_t *store, cbm_rel_pattern_t *rel,
             continue;
         }
         if (!check_inline_props(&hop->node, target_node->props, target_node->prop_count, store)) {
+            continue;
+        }
+        cbm_node_t *existing = binding_get(b, to_var);
+        if (existing && existing->id != hop->node.id) {
             continue;
         }
         binding_t nb = {0};
@@ -4150,16 +4159,44 @@ static void execute_default_projection(cbm_pattern_t *pat0, binding_t *bindings,
 /* Cross-join node-only pattern into existing bindings */
 static void cross_join_nodes(binding_t **bindings, int *bind_count, cbm_node_t *extra_nodes,
                              int extra_count, const char *nvar, bool opt) {
-    binding_t *new_bindings = malloc(((*bind_count * extra_count) + SKIP_ONE) * sizeof(binding_t));
+    int capacity = *bind_count + extra_count + SKIP_ONE;
+    binding_t *new_bindings = malloc(capacity * sizeof(binding_t));
+    if (!new_bindings) {
+        return;
+    }
     int new_count = 0;
     for (int bi = 0; bi < *bind_count; bi++) {
         for (int ni = 0; ni < extra_count; ni++) {
+            if (new_count >= capacity) {
+                capacity *= 2;
+                binding_t *nxt = realloc(new_bindings, capacity * sizeof(binding_t));
+                if (!nxt) {
+                    for (int k = 0; k < new_count; k++) {
+                        binding_free(&new_bindings[k]);
+                    }
+                    free(new_bindings);
+                    return;
+                }
+                new_bindings = nxt;
+            }
             binding_t nb = {0};
             binding_copy(&nb, &(*bindings)[bi]);
             binding_set(&nb, nvar, &extra_nodes[ni]);
             new_bindings[new_count++] = nb;
         }
         if (opt && extra_count == 0) {
+            if (new_count >= capacity) {
+                capacity *= 2;
+                binding_t *nxt = realloc(new_bindings, capacity * sizeof(binding_t));
+                if (!nxt) {
+                    for (int k = 0; k < new_count; k++) {
+                        binding_free(&new_bindings[k]);
+                    }
+                    free(new_bindings);
+                    return;
+                }
+                new_bindings = nxt;
+            }
             binding_t nb = {0};
             binding_copy(&nb, &(*bindings)[bi]);
             new_bindings[new_count++] = nb;
@@ -4177,10 +4214,14 @@ static void cross_join_nodes(binding_t **bindings, int *bind_count, cbm_node_t *
 static void cross_join_with_rels(cbm_store_t *store, cbm_pattern_t *patn, binding_t **bindings,
                                  int *bind_count, cbm_node_t *extra_nodes, int extra_count,
                                  const char *nvar, bool opt) {
-    binding_t *new_bindings =
-        malloc(((*bind_count * extra_count * CYP_GROWTH_10) + SKIP_ONE) * sizeof(binding_t));
+    int capacity = *bind_count + extra_count + SKIP_ONE;
+    binding_t *new_bindings = malloc(capacity * sizeof(binding_t));
+    if (!new_bindings) {
+        return;
+    }
     int new_count = 0;
     for (int bi = 0; bi < *bind_count; bi++) {
+        bool any_matched = false;
         for (int ni = 0; ni < extra_count; ni++) {
             binding_t nb = {0};
             binding_copy(&nb, &(*bindings)[bi]);
@@ -4190,13 +4231,41 @@ static void cross_join_with_rels(cbm_store_t *store, cbm_pattern_t *patn, bindin
             int tc = SKIP_ONE;
             int tcap = SKIP_ONE;
             const char *tv = nvar;
-            expand_pattern_rels(store, patn, &tmp, &tc, &tcap, &tv, opt);
-            for (int ti = 0; ti < tc; ti++) {
-                new_bindings[new_count++] = tmp[ti];
+            expand_pattern_rels(store, patn, &tmp, &tc, &tcap, &tv, false);
+            if (tc > 0) {
+                any_matched = true;
+                for (int ti = 0; ti < tc; ti++) {
+                    if (new_count >= capacity) {
+                        capacity *= 2;
+                        binding_t *nxt = realloc(new_bindings, capacity * sizeof(binding_t));
+                        if (!nxt) {
+                            for (int k = 0; k < new_count; k++) {
+                                binding_free(&new_bindings[k]);
+                            }
+                            free(new_bindings);
+                            free(tmp);
+                            return;
+                        }
+                        new_bindings = nxt;
+                    }
+                    new_bindings[new_count++] = tmp[ti];
+                }
             }
             free(tmp);
         }
-        if (opt && extra_count == 0) {
+        if (opt && !any_matched) {
+            if (new_count >= capacity) {
+                capacity *= 2;
+                binding_t *nxt = realloc(new_bindings, capacity * sizeof(binding_t));
+                if (!nxt) {
+                    for (int k = 0; k < new_count; k++) {
+                        binding_free(&new_bindings[k]);
+                    }
+                    free(new_bindings);
+                    return;
+                }
+                new_bindings = nxt;
+            }
             binding_t nb = {0};
             binding_copy(&nb, &(*bindings)[bi]);
             new_bindings[new_count++] = nb;
