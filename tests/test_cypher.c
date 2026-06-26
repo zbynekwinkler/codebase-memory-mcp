@@ -2222,6 +2222,26 @@ TEST(cypher_exec_with_where) {
     PASS();
 }
 
+TEST(cypher_exec_with_node_bare_prop) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) "
+                                "WHERE f.name = \"HandleOrder\" "
+                                "WITH f "
+                                "RETURN f.qualified_name",
+                                "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1);
+    /* In the bugged version, this returned "f" because the node was stripped.
+     * With our fix, the bare node variable passed through WITH retains its
+     * properties, including the actual qualified_name. */
+    ASSERT_STR_EQ(r.rows[0][0], "pkg/orders.HandleOrder");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_exec_with_orderby_limit) {
     cbm_store_t *s = setup_cypher_store();
     cbm_cypher_result_t r = {0};
@@ -2665,6 +2685,7 @@ SUITE(cypher) {
     RUN_TEST(cypher_exec_with_count);
     RUN_TEST(cypher_exec_with_node_groupvar_prop);
     RUN_TEST(cypher_exec_with_where);
+    RUN_TEST(cypher_exec_with_node_bare_prop);
     RUN_TEST(cypher_exec_with_orderby_limit);
     RUN_TEST(cypher_parse_with);
     RUN_TEST(cypher_parse_with_where);

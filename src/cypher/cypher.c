@@ -3642,9 +3642,25 @@ static void execute_with_simple(cbm_return_clause_t *wc, binding_t *bindings, in
         for (int ci = 0; ci < wc->count; ci++) {
             char name_buf[CBM_SZ_256];
             const char *alias = resolve_item_alias(&wc->items[ci], name_buf, sizeof(name_buf));
+            cbm_return_item_t *item = &wc->items[ci];
+
+            if (!item->property && !item->func && !item->kase) {
+                const char *pname = item->alias ? item->alias : item->variable;
+                cbm_node_t *n = binding_get(&bindings[bi], item->variable);
+                if (n) {
+                    binding_set(&vb, pname, n);
+                    continue;
+                }
+                cbm_edge_t *e = binding_get_edge(&bindings[bi], item->variable);
+                if (e) {
+                    binding_set_edge(&vb, pname, e);
+                    continue;
+                }
+            }
+
             char func_buf[CBM_SZ_512];
             const char *val =
-                project_item(&bindings[bi], &wc->items[ci], func_buf, sizeof(func_buf));
+                project_item(&bindings[bi], item, func_buf, sizeof(func_buf));
             with_add_vbinding_var(&vb, alias, val);
         }
         vbindings[(*vcount)++] = vb;
