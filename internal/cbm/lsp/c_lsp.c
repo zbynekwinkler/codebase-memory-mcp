@@ -3284,8 +3284,8 @@ void c_process_statement(CLSPContext *ctx, TSNode node) {
 // Emit helpers
 // ============================================================================
 
-static void c_emit_resolved_call(CLSPContext *ctx, const char *callee_qn, const char *strategy,
-                                 float confidence) {
+static void c_emit_resolved_call_orig(CLSPContext *ctx, const char *callee_qn, const char *orig,
+                                      const char *strategy, float confidence) {
     if (!ctx->resolved_calls || !callee_qn || !ctx->enclosing_func_qn)
         return;
     CBMResolvedCall rc;
@@ -3293,8 +3293,19 @@ static void c_emit_resolved_call(CLSPContext *ctx, const char *callee_qn, const 
     rc.callee_qn = callee_qn;
     rc.strategy = strategy;
     rc.confidence = confidence;
-    rc.reason = NULL;
+    // For a data-flow resolution (e.g. a function pointer `fp` resolved to its
+    // target), `reason` carries the ORIGINAL textual callee name the LSP
+    // resolved FROM, so the pipeline join can match the call site on that name
+    // even though it differs from the resolved callee_qn's short name. `reason`
+    // is otherwise NULL for resolved calls and is never read for them by the
+    // pipeline consumers, so this overload is side-effect-free.
+    rc.reason = orig;
     cbm_resolvedcall_push(ctx->resolved_calls, ctx->arena, rc);
+}
+
+static void c_emit_resolved_call(CLSPContext *ctx, const char *callee_qn, const char *strategy,
+                                 float confidence) {
+    c_emit_resolved_call_orig(ctx, callee_qn, NULL, strategy, confidence);
 }
 
 static void c_emit_unresolved_call(CLSPContext *ctx, const char *expr_text, const char *reason) {
@@ -3601,9 +3612,12 @@ static void c_resolve_calls_in_node_inner(CLSPContext *ctx, TSNode node) {
                     if (fp_target) {
                         // Distinguish DLL/dynamic resolution from static fp targets
                         bool is_dll = (strncmp(fp_target, "external.", 9) == 0);
-                        c_emit_resolved_call(ctx, fp_target,
-                                             is_dll ? "lsp_dll_resolve" : "lsp_func_ptr",
-                                             is_dll ? 0.80f : 0.85f);
+                        // The textual callee is the pointer variable `name` (e.g.
+                        // `fp`), resolved to a differently named target. Pass it
+                        // as orig so the join matches the call on the pointer name.
+                        c_emit_resolved_call_orig(ctx, fp_target, name,
+                                                  is_dll ? "lsp_dll_resolve" : "lsp_func_ptr",
+                                                  is_dll ? 0.80f : 0.85f);
                         goto recurse;
                     }
 

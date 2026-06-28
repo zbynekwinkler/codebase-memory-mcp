@@ -105,7 +105,17 @@ static inline const CBMResolvedCall *cbm_pipeline_find_lsp_resolution(
          * calls (bare callee_name) are unaffected. */
         const char *call_short = cbm_lsp_bare_segment(call->callee_name);
         if (strcmp(short_name, call_short) != 0) {
-            continue;
+            /* Data-flow resolution: a function-pointer / DLL call's textual
+             * callee is the pointer name (`fp`), which the LSP resolved to a
+             * differently-named target and stashed in `reason`. Match the call
+             * site on that original name, gated to those strategies so `reason`
+             * is never misread as an unresolved-call diagnostic. */
+            if (!(rc->reason && rc->strategy &&
+                  (strcmp(rc->strategy, "lsp_func_ptr") == 0 ||
+                   strcmp(rc->strategy, "lsp_dll_resolve") == 0) &&
+                  strcmp(cbm_lsp_bare_segment(rc->reason), call_short) == 0)) {
+                continue;
+            }
         }
         if (!best || rc->confidence > best->confidence) {
             best = rc;
